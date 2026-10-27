@@ -1,5 +1,6 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 
 /**
@@ -37,14 +38,98 @@ public class AperiodicCommandTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 3: implementați taskul aperiodic:
-        //   - preluați comenzile din coadă: commands.take()
-        //   - separați numele comenzii de parametru: command.split(" ")
-        //   - executați comanda (periodic.setPeriodMs(...), sensor.reset() etc.)
-        //   - publicați confirmarea pe Config.statusTopic(deviceId)
-        //   - o comandă necunoscută sau un parametru invalid nu trebuie să
-        //     oprească taskul: publicați "ERROR <motiv>"
-        //
-        // Vezi exemplul exemple/01-taskuri/.../AperiodicTaskExample.java
+        while(!Thread.currentThread().isInterrupted())
+        {
+            try
+            {
+                var command = commands.take();
+                var commandSplit = command.trim().split("\\s+");
+                var commandName = commandSplit[0].toUpperCase();
+
+                var reply = "";
+                try
+                {
+                    switch (commandName)
+                    {
+                        case "SET_INTERVAL" ->
+                        {
+                            if (commandSplit.length != 2)
+                            {
+                                throw new IllegalArgumentException(String.format("%s needs 1 parameter", commandName));
+                            }
+
+                            var convertedValue = Long.parseLong(commandSplit[1]);
+
+                            if (convertedValue <= 0)
+                            {
+                                throw new IllegalArgumentException(String.format("%s value must be > 0", commandName));
+                            }
+
+                            periodic.setPeriodMs(convertedValue);
+                            reply = String.format("OK %s %d", commandName, convertedValue);
+                        }
+                        case "SET_THRESHOLD" ->
+                        {
+                            if (commandSplit.length != 2)
+                            {
+                                throw new IllegalArgumentException(String.format("%s needs 1 parameter", commandName));
+                            }
+
+                            var convertedValue = Double.parseDouble(commandSplit[1]);
+
+                            if (Double.isNaN(convertedValue) || Double.isInfinite(convertedValue))
+                            {
+                                throw new IllegalArgumentException(String.format("%s value must be a finite number", commandName));
+                            }
+
+                            periodic.setThreshold(convertedValue);
+                            reply = String.format(Locale.US, "OK %s %.2f", commandName, convertedValue);
+                        }
+                        case "RESET" ->
+                        {
+                            if (commandSplit.length != 1)
+                            {
+                                throw new IllegalArgumentException(String.format("%s takes no parameters", commandName));
+                            }
+
+                            sensor.reset();
+                            reply = String.format("OK %s", commandName);
+                        }
+                        case "STATUS" ->
+                        {
+                            if (commandSplit.length != 1)
+                            {
+                                throw new IllegalArgumentException(String.format("%s takes no parameters", commandName));
+                            }
+
+                            reply = String.format(Locale.US, "OK %s period=%d threshold=%.2f", commandName, periodic.getPeriodMs(), periodic.getThreshold());
+                        }
+                        default ->
+                        {
+                            throw new IllegalArgumentException(String.format("unknown command: %s", commandSplit[0]));
+                        }
+                    }
+                }
+                catch (NumberFormatException e)
+                {
+                    reply = String.format("ERROR invalid number: %s", commandSplit[1]);
+                }
+                catch (IllegalArgumentException e)
+                {
+                    reply = String.format("ERROR %s", e.getMessage());
+                }
+
+                var timestamp = System.currentTimeMillis();
+                var message = String.format("%s;%d;%s", deviceId, timestamp, reply);
+                var topic = Config.statusTopic(deviceId);
+
+                mqtt.publish(topic, message);
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
     }
 }

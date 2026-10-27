@@ -1,5 +1,6 @@
 package ssatr.service;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 
 /**
@@ -27,12 +28,89 @@ public class MessageProcessor implements Runnable {
 
     @Override
     public void run() {
-        // TODO 4: într-o buclă:
-        //   - preluați un mesaj: inbox.take()
-        //   - salvați mesajul în fișierul CSV: storage.append(kind, mesaj)
-        //     (CsvStorage este gata implementată)
-        //   - actualizați dashboard-ul, în funcție de kind
-        //   - alarmele și confirmările se afișează imediat în consolă
-        //   - un mesaj greșit (format invalid) nu trebuie să oprească thread-ul
+        while(!Thread.currentThread().isInterrupted())
+        {
+            try
+            {
+                var message = inbox.take().trim();
+
+                if(message.isEmpty())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    ProcessMessage(message);
+                }
+                catch (IllegalArgumentException e)
+                {
+                    System.out.printf("[%s] invalid message \"%s\": %s%n", kind, message, e.getMessage());
+                }
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    private void ProcessMessage(String message)
+    {
+        switch (kind)
+        {
+            case "telemetry" ->
+            {
+                var fields = SplitFields(message, 3);
+                var deviceId = fields[0];
+                var timestamp = Long.parseLong(fields[1]);
+                var temperature = Double.parseDouble(fields[2]);
+
+                storage.append(kind, message);
+                dashboard.UpdateTelemetry(deviceId, timestamp, temperature);
+            }
+            case "alarm" ->
+            {
+                var fields = SplitFields(message, 4);
+                var deviceId = fields[0];
+                var timestamp = Long.parseLong(fields[1]);
+                var temperature = Double.parseDouble(fields[2]);
+                var threshold = Double.parseDouble(fields[3]);
+
+                storage.append(kind, message);
+                dashboard.RegisterAlarm(deviceId, timestamp, temperature, threshold);
+                System.out.printf(Locale.US, "ALARM %s: temperature %.2f exceeded threshold %.2f%n", deviceId, temperature, threshold);
+            }
+            case "status" ->
+            {
+                var fields = SplitFields(message, 3);
+                var deviceId = fields[0];
+                var timestamp = Long.parseLong(fields[1]);
+                var text = fields[2];
+
+                storage.append(kind, message);
+                dashboard.UpdateStatus(deviceId, timestamp, text);
+                System.out.printf("STATUS %s: %s%n", deviceId, text);
+            }
+            default -> throw new IllegalArgumentException(String.format("unknown message kind: %s", kind));
+        }
+    }
+
+    private static String[] SplitFields(String message, int expectedFieldsCount)
+    {
+        var fields = message.split(";", expectedFieldsCount);
+
+        if (fields.length != expectedFieldsCount)
+        {
+            throw new IllegalArgumentException(String.format("expected %d fields, got %d", expectedFieldsCount, fields.length));
+        }
+
+        if (fields[0].isBlank())
+        {
+            throw new IllegalArgumentException("empty deviceId");
+        }
+
+        return fields;
     }
 }
